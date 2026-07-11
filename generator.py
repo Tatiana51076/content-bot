@@ -83,19 +83,18 @@ def generate_post(topic, tone, facts=None):
         )
         response.raise_for_status()
         content = response.json()["choices"][0]["message"]["content"]
-# Попытка распарсить JSON, при ошибке пробуем обрезать до последней '}'
-try:
-    return json.loads(content)
-except json.JSONDecodeError:
-    # Иногда модель добавляет лишний текст после JSON, обрежем
-    end = content.rfind('}')
-    if end != -1:
+        # Попытка распарсить JSON
         try:
-            return json.loads(content[:end+1])
-        except:
-            pass
-    # Если всё равно не вышло, возвращаем ошибку, которая вызовет резервный пост
-    raise ValueError("Invalid JSON from model")
+            return json.loads(content)
+        except json.JSONDecodeError:
+            # Иногда модель добавляет лишний текст после JSON
+            end = content.rfind('}')
+            if end != -1:
+                try:
+                    return json.loads(content[:end+1])
+                except:
+                    pass
+            raise ValueError("Invalid JSON from model")
     except Exception as e:
         print(f"[ERROR] DeepSeek API error: {e}")
         return {
@@ -103,27 +102,6 @@ except json.JSONDecodeError:
             "image_prompt": "фура на трассе, закат, деловой стиль",
             "image_text_overlay": f"{BRAND_NAME}"
         }
-
-def generate_image(prompt, text_overlay=""):
-    try:
-        response = requests.post(
-            "https://api.deepseek.com/v1/images/generations",
-            headers=HEADERS,
-            json={
-                "model": "deepseek-v4-flash",
-                "prompt": f"{prompt}. Цвета: {', '.join(BRAND_COLORS)}",
-                "size": "1024x1024",
-                "n": 1,
-                "quality": "standard"
-            },
-            timeout=60
-        )
-        response.raise_for_status()
-        return response.json()["data"][0]["url"]
-    except Exception as e:
-        print(f"[ERROR] Image generation error: {e}")
-        return None
-
 def collect_facts(topic):
     facts = {}
     if topic == "рейс_недели":
