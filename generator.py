@@ -8,7 +8,7 @@ from telegram.ext import Application
 
 # ---------- Настройки (секреты или значения по умолчанию) ----------
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
-BRAND_NAME = os.getenv("BRAND_NAME", "24 Градуса")
+BRAND_NAME = os.getenv("BRAND_NAME", "ГлобалТракГарант")
 try:
     BRAND_COLORS = json.loads(os.getenv("BRAND_COLORS", '["#0C7281", "#043556", "#042134", "#FFFFFB"]'))
 except Exception:
@@ -83,7 +83,19 @@ def generate_post(topic, tone, facts=None):
         )
         response.raise_for_status()
         content = response.json()["choices"][0]["message"]["content"]
-        return json.loads(content)
+# Попытка распарсить JSON, при ошибке пробуем обрезать до последней '}'
+try:
+    return json.loads(content)
+except json.JSONDecodeError:
+    # Иногда модель добавляет лишний текст после JSON, обрежем
+    end = content.rfind('}')
+    if end != -1:
+        try:
+            return json.loads(content[:end+1])
+        except:
+            pass
+    # Если всё равно не вышло, возвращаем ошибку, которая вызовет резервный пост
+    raise ValueError("Invalid JSON from model")
     except Exception as e:
         print(f"[ERROR] DeepSeek API error: {e}")
         return {
