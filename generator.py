@@ -2,6 +2,8 @@ import os
 import json
 import requests
 import asyncio
+import glob
+import random
 from datetime import datetime
 from database import get_photos, get_unused_news, mark_news_used
 from telegram.ext import Application
@@ -102,6 +104,28 @@ def generate_post(topic, tone, facts=None):
             "image_prompt": "фура на трассе, закат, деловой стиль",
             "image_text_overlay": f"{BRAND_NAME}"
         }
+
+def generate_image(prompt, text_overlay=""):
+    """Генерация изображения через DeepSeek V4 Flash."""
+    try:
+        response = requests.post(
+            "https://api.deepseek.com/v1/images/generations",
+            headers=HEADERS,
+            json={
+                "model": "deepseek-v4-flash",
+                "prompt": f"{prompt}. Цвета: {', '.join(BRAND_COLORS)}",
+                "size": "1024x1024",
+                "n": 1,
+                "quality": "standard"
+            },
+            timeout=60
+        )
+        response.raise_for_status()
+        return response.json()["data"][0]["url"]
+    except Exception as e:
+        print(f"[ERROR] Image generation error: {e}")
+        return None
+
 def collect_facts(topic):
     facts = {}
     if topic == "рейс_недели":
@@ -158,6 +182,13 @@ def collect_facts(topic):
         }
     return facts
 
+def get_random_photo():
+    """Возвращает путь к случайному реальному фото из assets/photos."""
+    photo_files = glob.glob("assets/photos/*.jpg") + glob.glob("assets/photos/*.png")
+    if not photo_files:
+        return None
+    return random.choice(photo_files)
+
 # ---------- Точка входа ----------
 async def main():
     app = Application.builder().token(BOT_TOKEN).build()
@@ -166,9 +197,25 @@ async def main():
     facts = collect_facts(topic)
     post_data = generate_post(topic, tone, facts)
     text = post_data.get("text", "Не удалось сгенерировать пост.")
+    image_prompt = post_data.get("image_prompt", "")
     
-    # Отправка в Telegram-канал (отсюда Дзен-бот заберёт пост)
-    await app.bot.send_message(chat_id=CHANNEL_ID, text=text)
+    # Определяем изображение для поста
+    image_url = None
+    local_photo = get_random_photo()
+    
+    if local_photo:
+        # Приоритет: реальное фото из папки
+        with open(local_photo, "rb") as f:
+            await app.bot.send_photo(chat_id=CHANNEL_ID, photo=f, caption=text)
+    else:
+        # Пытаемся сгенерировать через ИИ
+        image_url = generate_image(image_prompt) if image_prompt else None
+        if image_url:
+            await app.bot.send_photo(chat_id=CHANNEL_ID, photo=image_url, caption=text)
+        else:
+            # Если ни реального, ни ИИ-изображения нет, отправляем просто текст
+            await app.bot.send_message(chat_id=CHANNEL_ID, text=text)
+    
     # Уведомление вам
     await app.bot.send_message(chat_id=LOGIST_TG_ID, text="✅ Пост опубликован в канале и скоро появится в Дзен")
     print("Пост опубликован в канале")
