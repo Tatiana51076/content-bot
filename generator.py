@@ -103,24 +103,20 @@ def generate_post(topic, tone, facts=None):
         print(f"[DEBUG] Raw model response:\n{content[:500]}...")  # первые 500 символов для диагностики
 
         # --- Улучшенная очистка JSON ---
-        # Убираем возможные обёртки markdown (```json ... ```)
         content = content.strip()
         if content.startswith("```json"):
-            content = content[7:]  # убираем ```json
+            content = content[7:]
             if content.endswith("```"):
-                content = content[:-3]  # убираем закрывающие ```
+                content = content[:-3]
         elif content.startswith("```"):
             content = content[3:]
             if content.endswith("```"):
                 content = content[:-3]
-        # Удаляем BOM (если есть)
         if content.startswith('\ufeff'):
             content = content[1:]
-        # Пытаемся парсить
         try:
             return json.loads(content)
         except json.JSONDecodeError:
-            # Последняя попытка: обрезать до последнего }
             end = content.rfind('}')
             if end != -1:
                 try:
@@ -130,7 +126,6 @@ def generate_post(topic, tone, facts=None):
             raise ValueError("Invalid JSON from model")
     except Exception as e:
         print(f"[ERROR] DeepSeek API error: {e}")
-        # Расширенный резервный пост
         return {
             "text": (
                 f"{BRAND_NAME} — надёжные рефрижераторные перевозки по Москве и области. "
@@ -143,7 +138,6 @@ def generate_post(topic, tone, facts=None):
         }
 
 def generate_image(prompt, text_overlay=""):
-    """Генерация изображения через DeepSeek V4 Flash."""
     try:
         response = requests.post(
             "https://api.deepseek.com/v1/images/generations",
@@ -225,7 +219,6 @@ def collect_facts(topic):
     return facts
 
 def get_random_media():
-    """Возвращает путь к случайному медиафайлу (фото или видео) из assets/photos."""
     extensions = ["*.jpg", "*.jpeg", "*.png", "*.mp4", "*.mov", "*.avi"]
     media_files = []
     for ext in extensions:
@@ -244,26 +237,47 @@ async def main():
     text = post_data.get("text", "Не удалось сгенерировать пост.")
     image_prompt = post_data.get("image_prompt", "")
     
-    # Определяем медиа для поста
+    # ---- Обработка текста для отправки ----
+    caption_limit = 1024
+    if len(text) <= caption_limit:
+        caption = text
+        extra_text = None
+    else:
+        # Короткая подпись к медиа (до 500 символов)
+        caption = text[:500] + "..."
+        extra_text = text  # полный текст отправим отдельно
+
     media_path = get_random_media()
-    
+
+    # ---- Отправка медиа с короткой подписью ----
     if media_path:
         is_video = media_path.lower().endswith(('.mp4', '.mov', '.avi'))
         with open(media_path, "rb") as f:
             if is_video:
-                await app.bot.send_video(chat_id=CHANNEL_ID, video=f, caption=text)
+                await app.bot.send_video(chat_id=CHANNEL_ID, video=f, caption=caption)
             else:
-                await app.bot.send_photo(chat_id=CHANNEL_ID, photo=f, caption=text)
+                await app.bot.send_photo(chat_id=CHANNEL_ID, photo=f, caption=caption)
     else:
         # Пытаемся сгенерировать изображение через ИИ
         image_url = generate_image(image_prompt) if image_prompt else None
         if image_url:
-            await app.bot.send_photo(chat_id=CHANNEL_ID, photo=image_url, caption=text)
+            await app.bot.send_photo(chat_id=CHANNEL_ID, photo=image_url, caption=caption)
         else:
-            # Если ничего нет, отправляем просто текст
-            await app.bot.send_message(chat_id=CHANNEL_ID, text=text)
-    
-    # Уведомление вам
+            # Если медиа нет, отправляем полный текст (без caption)
+            extra_text = text  # весь текст
+            caption = None
+
+    # ---- Отправка полного текста отдельным сообщением, если он был обрезан ----
+    if extra_text:
+        max_msg_len = 4096
+        if len(extra_text) <= max_msg_len:
+            await app.bot.send_message(chat_id=CHANNEL_ID, text=extra_text)
+        else:
+            # Разбиваем на части по 4096 символов
+            for i in range(0, len(extra_text), max_msg_len):
+                await app.bot.send_message(chat_id=CHANNEL_ID, text=extra_text[i:i+max_msg_len])
+
+    # ---- Уведомление логисту ----
     await app.bot.send_message(chat_id=LOGIST_TG_ID, text="✅ Пост опубликован в канале и скоро появится в Дзен")
     print("Пост опубликован в канале")
 
