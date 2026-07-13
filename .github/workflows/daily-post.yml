@@ -21,3 +21,5 @@ jobs:
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
           LOGIST_TG_ID: ${{ secrets.LOGIST_TG_ID }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+
+          
