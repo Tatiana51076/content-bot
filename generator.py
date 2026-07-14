@@ -80,7 +80,7 @@ def generate_post(topic, tone, facts=None):
 
 Формат ответа — строгий JSON (без markdown, без пояснений):
 {{
-    "text": "текст поста (1500–2000 знаков, с хэштегами в конце, без эмодзи в начале, без markdown разметки, просто текст, возможно со структурой: подзаголовки, списки)",
+    "text": "текст поста (максимум 850-950 знаков, строго до 1000, с хэштегами в конце, без эмодзи и markdown, просто текст)",
     "image_prompt": "промпт для генерации изображения (описание: фура, дорога, груз, стиль деловой, цвета бренда, без людей)",
     "image_text_overlay": "короткий заголовок для картинки (3-5 слов)"
 }}
@@ -93,7 +93,7 @@ def generate_post(topic, tone, facts=None):
                 "model": "deepseek-v4-flash",
                 "messages": [{"role": "user", "content": prompt}],
                 "response_format": {"type": "json_object"},
-                "max_tokens": 2500,
+                "max_tokens": 1000,
                 "temperature": 0.7
             },
             timeout=90
