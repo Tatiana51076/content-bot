@@ -5,10 +5,8 @@ import asyncio
 import glob
 import random
 from datetime import datetime
-from database import get_photos, get_unused_news, mark_news_used
 from telegram.ext import Application
 
-# ---------- Настройки (секреты или значения по умолчанию) ----------
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 BRAND_NAME = os.getenv("BRAND_NAME", "ГлобалТракГарант")
 try:
@@ -26,18 +24,16 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-# Темы дней
 DAYS_THEMES = {
-    0: ("новости_компании", "дружеский"),        # Пн
-    1: ("отраслевые_новости", "деловой"),         # Вт
-    2: ("законодательство", "деловой"),           # Ср
-    3: ("совет_или_лайфхак", "дружеский"),        # Чт
-    4: ("вопрос_подписчикам", "дружеский"),       # Пт
-    5: ("погода_и_дороги", "дружеский"),          # Сб
-    6: ("итоги_недели", "дружеский"),             # Вс
+    0: ("новости_компании", "дружеский"),
+    1: ("отраслевые_новости", "деловой"),
+    2: ("законодательство", "деловой"),
+    3: ("совет_или_лайфхак", "дружеский"),
+    4: ("вопрос_подписчикам", "дружеский"),
+    5: ("трудовые_будни", "дружеский"),
+    6: ("итоги_недели", "дружеский"),
 }
 
-# ---------- Функции генерации ----------
 def generate_post(topic, tone, facts=None):
     if facts is None:
         facts = {}
@@ -47,7 +43,7 @@ def generate_post(topic, tone, facts=None):
         "законодательство": "пост об изменении в законодательстве для перевозчиков (если есть новость) или полезное напоминание",
         "совет_или_лайфхак": "полезный пост для клиентов: как выбрать перевозчика, советы по перевозке",
         "вопрос_подписчикам": "вовлекающий пост с вопросом к аудитории, призывом к обсуждению",
-        "погода_и_дороги": "пост о погоде и дорожной ситуации в Московском регионе без указания конкретных трасс",
+        "трудовые_будни": "пост о рабочих буднях: тюнинг, доработка, ремонт техники, фото процесса",
         "итоги_недели": "пост с итогами недели в цифрах: рейсы, километры, тонны, отзывы",
     }
     description = theme_descriptions.get(topic, "пост для транспортной компании")
@@ -63,20 +59,16 @@ def generate_post(topic, tone, facts=None):
 - Перевозчики (партнёры-экспедиторы) — их боль: простой, холостой пробег, долгие расчёты, бюрократия, отсутствие обратной связи.
 
 Твоя задача: сгенерировать контент для продвижения, который решает конкретные боли аудитории, доказывает экспертность компании и формирует образ надёжного технологичного лидера.
-Пиши коротко, ёмко, структурно (списки, подзаголовки, таблицы там, где уместно). Избегай общих фраз («мы лучшие», «качество важнее всего») — подкрепляй каждое утверждение аргументом, цифрой или кейсом.
-Контент должен работать на 3 цели: снятие возражений, демонстрация УТП, призыв к конкретному действию (заявка, звонок, расчёт ставки).
+Пиши коротко, ёмко. Избегай общих фраз — подкрепляй каждое утверждение аргументом.
 
 Сейчас тема поста: {description}.
-Тон сообщения: {tone} (но в целом жёсткий, экспертный, без лести клиенту, с уважением к его опыту).
-Цвета бренда: {colors_str}.
+Тон сообщения: {tone}.
 
 Дополнительные данные (факты, которые можно использовать):
 {facts_str}
 
-Мы — компания «ГлобалТракГарант». Работаем с 2016 года, специализируемся на рефрижераторных перевозках по Москве и Московской области. 
-У нас собственный автопарк, мы строго следим за техническим состоянием наших автомобилей.
-У нас есть разрешения на перевозку опасных грузов, валидация и ВТТ.Термописец,Адвантум.
-Наш тон — уверенный, но дружеский, без официоза. Мы гордимся отсутствием срывов и строгим контролем температуры. Наши авто оснащены видеоконтролем 24/7, заказчик может в режиме онлайн посмотреть, как перевозится груз. В каждом посте подчёркиваем надёжность и экспертность.
+Мы — компания «ГлобалТракГарант». Работаем с 2016 года, специализируемся на рефрижераторных перевозках по Москве и Московской области.
+У нас собственный автопарк, строгий контроль температуры, видеоконтроль 24/7.
 
 Формат ответа — строгий JSON (без markdown, без пояснений):
 {{
@@ -100,9 +92,8 @@ def generate_post(topic, tone, facts=None):
         )
         response.raise_for_status()
         content = response.json()["choices"][0]["message"]["content"]
-        print(f"[DEBUG] Raw model response:\n{content[:500]}...")  # первые 500 символов для диагностики
+        print(f"[DEBUG] Raw model response:\n{content[:500]}...")
 
-        # --- Улучшенная очистка JSON ---
         content = content.strip()
         if content.startswith("```json"):
             content = content[7:]
@@ -172,23 +163,11 @@ def collect_facts(topic):
             "значение_для_клиента": "своевременная доставка скоропорта становится ещё критичнее"
         }
     elif topic == "законодательство":
-        news = get_unused_news()
-        if news:
-            n = news[0]
-            facts = {
-                "закон": n["title"],
-                "суть": n["summary"],
-                "вступает_в_силу": n["effective_date"],
-                "кого_касается": n["affects"],
-                "источник": n["source"]
-            }
-            mark_news_used(n["id"])
-        else:
-            facts = {
-                "закон": "актуальные правила перевозки грузов в Москве",
-                "суть": "напоминаем о требованиях к пропускам и времени въезда в центр",
-                "кого_касается": "всех перевозчиков, работающих в пределах ТТК"
-            }
+        facts = {
+            "закон": "актуальные правила перевозки грузов в Москве",
+            "суть": "напоминаем о требованиях к пропускам и времени въезда в центр",
+            "кого_касается": "всех перевозчиков, работающих в пределах ТТК"
+        }
     elif topic == "совет_или_лайфхак":
         facts = {
             "тема": "как выбрать надёжного перевозчика для скоропорта",
@@ -200,12 +179,11 @@ def collect_facts(topic):
             "варианты_ответов": "Цена / Скорость / Надёжность / Всё сразу",
             "призыв": "Делитесь мнением в комментариях!"
         }
-    elif topic == "погода_и_дороги":
+    elif topic == "трудовые_будни":
         facts = {
-            "регион": "Москва и Московская область",
-            "прогноз": "сегодня дождь, местами гроза, температура +18°C",
-            "рекомендация": "водителям соблюдать дистанцию, избегать резких манёвров",
-            "пробки": "ожидаются затруднения на МКАД в районе 17:00-19:00"
+            "работа": "тюнинг и доработка грузовиков",
+            "что_делаем": "установка дополнительного оборудования, подготовка к рейсу, ремонт",
+            "суть": "показать клиентам, как мы заботимся о технике и качестве"
         }
     elif topic == "итоги_недели":
         facts = {
@@ -218,16 +196,19 @@ def collect_facts(topic):
         }
     return facts
 
-def get_random_media():
+def get_random_media(topic=""):
+    if topic == "трудовые_будни":
+        folder = "assets/tuning"
+    else:
+        folder = "assets/photos"
     extensions = ["*.jpg", "*.jpeg", "*.png", "*.mp4", "*.mov", "*.avi"]
     media_files = []
     for ext in extensions:
-        media_files.extend(glob.glob(f"assets/photos/{ext}"))
+        media_files.extend(glob.glob(f"{folder}/{ext}"))
     if not media_files:
-        return None
-    return random.choice(media_files)
+        return None, False
+    return random.choice(media_files), media_files[0].lower().endswith(('.mp4', '.mov', '.avi'))
 
-# ---------- Точка входа ----------
 async def main():
     app = Application.builder().token(BOT_TOKEN).build()
     today = datetime.now().weekday()
@@ -236,49 +217,26 @@ async def main():
     post_data = generate_post(topic, tone, facts)
     text = post_data.get("text", "Не удалось сгенерировать пост.")
     image_prompt = post_data.get("image_prompt", "")
-    
-    # ---- Обработка текста для отправки ----
-    caption_limit = 1024
-    if len(text) <= caption_limit:
-        caption = text
-        extra_text = None
-    else:
-        # Короткая подпись к медиа (до 500 символов)
-        caption = text[:500] + "..."
-        extra_text = text  # полный текст отправим отдельно
 
-    media_path = get_random_media()
+    if len(text) > 1000:
+        text = text[:997] + "..."
 
-    # ---- Отправка медиа с короткой подписью ----
+    media_path, is_video = get_random_media(topic) if get_random_media(topic) else (None, False)
+
     if media_path:
-        is_video = media_path.lower().endswith(('.mp4', '.mov', '.avi'))
         with open(media_path, "rb") as f:
             if is_video:
-                await app.bot.send_video(chat_id=CHANNEL_ID, video=f, caption=caption)
+                await app.bot.send_video(chat_id=CHANNEL_ID, video=f, caption=text)
             else:
-                await app.bot.send_photo(chat_id=CHANNEL_ID, photo=f, caption=caption)
+                await app.bot.send_photo(chat_id=CHANNEL_ID, photo=f, caption=text)
     else:
-        # Пытаемся сгенерировать изображение через ИИ
         image_url = generate_image(image_prompt) if image_prompt else None
         if image_url:
-            await app.bot.send_photo(chat_id=CHANNEL_ID, photo=image_url, caption=caption)
+            await app.bot.send_photo(chat_id=CHANNEL_ID, photo=image_url, caption=text)
         else:
-            # Если медиа нет, отправляем полный текст (без caption)
-            extra_text = text  # весь текст
-            caption = None
+            await app.bot.send_message(chat_id=CHANNEL_ID, text=text)
 
-    # ---- Отправка полного текста отдельным сообщением, если он был обрезан ----
-    if extra_text:
-        max_msg_len = 4096
-        if len(extra_text) <= max_msg_len:
-            await app.bot.send_message(chat_id=CHANNEL_ID, text=extra_text)
-        else:
-            # Разбиваем на части по 4096 символов
-            for i in range(0, len(extra_text), max_msg_len):
-                await app.bot.send_message(chat_id=CHANNEL_ID, text=extra_text[i:i+max_msg_len])
-
-    # ---- Уведомление логисту ----
-    await app.bot.send_message(chat_id=LOGIST_TG_ID, text="✅ Пост опубликован в канале и скоро появится в Дзен")
+    await app.bot.send_message(chat_id=LOGIST_TG_ID, text="✅ Пост опубликован в канале")
     print("Пост опубликован в канале")
 
 if __name__ == "__main__":
