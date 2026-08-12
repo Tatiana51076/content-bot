@@ -206,46 +206,29 @@ def generate_article(topic):
     print("[ERROR] Article generation failed after 3 attempts")
     return None
 
-# --- Отправка статьи на модерацию: email (Yandex) + Telegram (запасной) ---
+# --- Отправка статьи на модерацию ---
 
-def send_article_email(title, text, topic):
-    """Отправка статьи на email через SMTP Yandex."""
-    import smtplib
-    from email.mime.text import MIMEText
-    from email.header import Header
-    from email.utils import formataddr
-
-    smtp_user = os.getenv("SMTP_USER")
-    smtp_pass = os.getenv("SMTP_PASSWORD")
-    mail_to = os.getenv("MAIL_TO") or smtp_user
-    if not smtp_user or not smtp_pass:
-        print("[EMAIL] SMTP_USER/SMTP_PASSWORD не заданы, пропускаю email")
-        return False
-
-    today = datetime.now().strftime("%d.%m.%Y")
-    body = (
-        f"Тема статьи: {topic['title']}\n"
-        f"Дата: {today}\n"
-        f"Канал Дзен: {DZEN_LINK}\n\n"
-        f"=== {title} ===\n\n"
+def save_article_to_file(title, text, topic):
+    """Сохраняет статью в файл .md в папке articles/ репозитория (для модерации в GitHub)."""
+    import re
+    today = datetime.now().strftime("%Y-%m-%d")
+    safe_title = re.sub(r'[\\/:*?"<>|]+', '', title)[:60].strip() or "statya"
+    os.makedirs("articles", exist_ok=True)
+    fname = f"articles/{today}_{safe_title}.md"
+    content = (
+        f"# {title}\n\n"
+        f"**Дата:** {datetime.now().strftime('%d.%m.%Y')}  \n"
+        f"**Тема:** {topic['title']}  \n"
+        f"**Канал Дзен:** {DZEN_LINK}  \n\n"
+        f"---\n\n"
         f"{text}\n\n"
-        f"---\nСтатья для модерации. Опубликуйте её в Дзене самостоятельно."
+        f"---\n\n"
+        f"*Статья сгенерирована автоматически. Проверьте и опубликуйте в Дзене самостоятельно.*"
     )
-    msg = MIMEText(body, "plain", "utf-8")
-    msg["Subject"] = Header(f"Статья для Дзена — {today}", "utf-8")
-    msg["From"] = formataddr((str(Header("Контент-бот", "utf-8")), smtp_user))
-    msg["To"] = mail_to
-
-    try:
-        server = smtplib.SMTP_SSL("smtp.yandex.ru", 465, timeout=60)
-        server.login(smtp_user, smtp_pass)
-        server.sendmail(smtp_user, [mail_to], msg.as_string())
-        server.quit()
-        print(f"[EMAIL] Статья отправлена на {mail_to}")
-        return True
-    except Exception as e:
-        print(f"[EMAIL] Ошибка отправки письма: {e}")
-        return False
+    with open(fname, "w", encoding="utf-8") as f:
+        f.write(content)
+    print(f"[FILE] Статья сохранена: {fname}")
+    return fname
 
 
 async def send_article(app, article, topic):
@@ -255,34 +238,28 @@ async def send_article(app, article, topic):
         print("[ERROR] Empty article text")
         return False
 
-    # Основной способ — email
-    email_ok = send_article_email(title, text, topic)
+    # Сохраняем статью в файл в репозитории (основной способ — открывать с телефона в GitHub)
+    fname = save_article_to_file(title, text, topic)
 
-    # Запасной способ — Telegram (если email недоступен)
+    # Отправляем ссылку на статью в Telegram для модерации
+    repo = os.getenv("GITHUB_REPOSITORY", "Tatiana51076/content-bot")
+    url = f"https://github.com/{repo}/blob/main/{fname}"
+    raw_url = f"https://raw.githubusercontent.com/{repo}/main/{fname}"
+
     message = (
         f"📰 Новая статья для Дзен — {datetime.now().strftime('%d.%m.%Y')}\n"
         f"📌 Тема: {topic['title']}\n"
         f"🔗 Канал: {DZEN_LINK}\n\n"
         f"**{title}**\n\n"
-        f"{text}\n\n"
+        f"Статья сохранена в репозитории. Откройте и скопируйте текст:\n"
+        f"{url}\n\n"
+        f"Быстрый просмотр (без входа): {raw_url}\n\n"
         f"---\n⚠️ Статья для модерации. Опубликуйте её в Дзене самостоятельно."
     )
 
-    # Длинные сообщения Telegram режутся, поэтому шлём частями (не более 3800 знаков на сообщение)
-    MAX_MSG = 3800
-    chunks = []
-    current = ""
-    for line in message.split("\n"):
-        if len(current) + len(line) + 1 > MAX_MSG and current:
-            chunks.append(current)
-            current = ""
-        current += line + "\n"
-    if current:
-        chunks.append(current)
-
-    for chunk in chunks:
-        await app.bot.send_message(chat_id=LOGIST_TG_ID, text=chunk)
-    print("Статья отправлена логисту на модерацию")
+    # Отправляем двумя сообщениями: ссылки + краткая сводка (без полного текста, чтобы не копировать из TG)
+    await app.bot.send_message(chat_id=LOGIST_TG_ID, text=message)
+    print("Ссылка на статью отправлена логисту")
     return True
 
 async def generate_and_send_article(app):
