@@ -24,6 +24,7 @@ def _env_colors():
 
 DZEN_LINK = os.getenv("DZEN_LINK", "https://dzen.ru/globaltruck.online?share_to=link")
 ARTICLE_MODEL = os.getenv("ARTICLE_MODEL") or os.getenv("LLM_MODEL", "deepseek/deepseek-v4-flash")
+LOGIST_TG_ID = int(os.getenv("LOGIST_TG_ID", "123456789"))
 
 # Состояние: файл с последними использованными темами (хранится в репозитории между запусками)
 STATE_FILE = "article_state.json"
