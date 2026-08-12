@@ -37,6 +37,9 @@ jobs:
           IMAGE_MODEL: openai/gpt-image-1-mini
           ARTICLE_MODEL: qwen/qwen3.5-plus
           ARTICLE_CUSTOM_TITLE: ${{ inputs.article_topic }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
       - name: Commit article state
         run: |
           git config user.name "content-bot"
