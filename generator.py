@@ -412,8 +412,9 @@ async def main():
     await app.bot.send_message(chat_id=LOGIST_TG_ID, text="✅ Пост опубликован в канале")
     print("Пост опубликован в канале")
 
-    # По воскресеньям (день 6) дополнительно генерируем статью для Дзена на модерацию
-    if today == 6:
+    # Статья для Дзена: по воскресеньям (день 6) ИЛИ когда задана ручная тема (для тестов)
+    custom_title = os.getenv("ARTICLE_CUSTOM_TITLE")
+    if today == 6 or custom_title:
         try:
             import articles
             await articles.generate_and_send_article(app)
