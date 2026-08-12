@@ -99,6 +99,11 @@ def save_state(state):
         json.dump(state, f, ensure_ascii=False, indent=2)
 
 def pick_topic():
+    # Если задана ручная тема через переменные окружения — используем её (для тестов и по запросу)
+    custom_title = os.getenv("ARTICLE_CUSTOM_TITLE")
+    custom_brief = os.getenv("ARTICLE_CUSTOM_BRIEF")
+    if custom_title:
+        return {"key": "custom", "title": custom_title, "brief": custom_brief or custom_title}
     state = load_state()
     recent = state.get("recent_keys", [])
     available = [t for t in ARTICLE_TOPICS if t["key"] not in recent]
@@ -151,47 +156,54 @@ def generate_article(topic):
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
-    try:
-        response = requests.post(
-            f"{api_base}/chat/completions",
-            headers=headers,
-            json={
-                "model": ARTICLE_MODEL,
-                "messages": [{"role": "user", "content": prompt}],
-                "response_format": {"type": "json_object"},
-                "max_tokens": 4000,
-                "temperature": 0.8,
-            },
-            timeout=180,
-        )
-        response.raise_for_status()
-        content = response.json()["choices"][0]["message"]["content"]
-        print(f"[DEBUG] Article raw response (first 300):\n{content[:300]}")
-
-        content = content.strip()
-        if content.startswith("```json"):
-            content = content[7:]
-            if content.endswith("```"):
-                content = content[:-3]
-        elif content.startswith("```"):
-            content = content[3:]
-            if content.endswith("```"):
-                content = content[:-3]
-        if content.startswith("\ufeff"):
-            content = content[1:]
+    last_err = None
+    for attempt in range(3):
         try:
-            return json.loads(content)
-        except json.JSONDecodeError:
-            end = content.rfind("}")
-            if end != -1:
-                try:
-                    return json.loads(content[: end + 1])
-                except Exception:
-                    pass
-            raise ValueError("Invalid JSON from model for article")
-    except Exception as e:
-        print(f"[ERROR] Article generation error: {e}")
-        return None
+            response = requests.post(
+                f"{api_base}/chat/completions",
+                headers=headers,
+                json={
+                    "model": ARTICLE_MODEL,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "response_format": {"type": "json_object"},
+                    "max_tokens": 4000,
+                    "temperature": 0.8,
+                },
+                timeout=300,
+            )
+            response.raise_for_status()
+            content = response.json()["choices"][0]["message"]["content"]
+            print(f"[DEBUG] Article raw response (first 300):\n{content[:300]}")
+
+            content = content.strip()
+            if content.startswith("```json"):
+                content = content[7:]
+                if content.endswith("```"):
+                    content = content[:-3]
+            elif content.startswith("```"):
+                content = content[3:]
+                if content.endswith("```"):
+                    content = content[:-3]
+            if content.startswith("\ufeff"):
+                content = content[1:]
+            try:
+                return json.loads(content)
+            except json.JSONDecodeError:
+                end = content.rfind("}")
+                if end != -1:
+                    try:
+                        return json.loads(content[: end + 1])
+                    except Exception:
+                        pass
+                raise ValueError("Invalid JSON from model for article")
+        except Exception as e:
+            last_err = e
+            print(f"[ERROR] Article generation error (attempt {attempt + 1}/3): {e}")
+            if attempt < 2:
+                import time
+                time.sleep(10)
+    print("[ERROR] Article generation failed after 3 attempts")
+    return None
 
 # --- Отправка статьи в Telegram на модерацию ---
 
