@@ -206,7 +206,47 @@ def generate_article(topic):
     print("[ERROR] Article generation failed after 3 attempts")
     return None
 
-# --- Отправка статьи в Telegram на модерацию ---
+# --- Отправка статьи на модерацию: email (Yandex) + Telegram (запасной) ---
+
+def send_article_email(title, text, topic):
+    """Отправка статьи на email через SMTP Yandex."""
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.header import Header
+    from email.utils import formataddr
+
+    smtp_user = os.getenv("SMTP_USER")
+    smtp_pass = os.getenv("SMTP_PASSWORD")
+    mail_to = os.getenv("MAIL_TO") or smtp_user
+    if not smtp_user or not smtp_pass:
+        print("[EMAIL] SMTP_USER/SMTP_PASSWORD не заданы, пропускаю email")
+        return False
+
+    today = datetime.now().strftime("%d.%m.%Y")
+    body = (
+        f"Тема статьи: {topic['title']}\n"
+        f"Дата: {today}\n"
+        f"Канал Дзен: {DZEN_LINK}\n\n"
+        f"=== {title} ===\n\n"
+        f"{text}\n\n"
+        f"---\nСтатья для модерации. Опубликуйте её в Дзене самостоятельно."
+    )
+    msg = MIMEText(body, "plain", "utf-8")
+    msg["Subject"] = Header(f"Статья для Дзена — {today}", "utf-8")
+    msg["From"] = formataddr((str(Header("Контент-бот", "utf-8")), smtp_user))
+    msg["To"] = mail_to
+
+    try:
+        server = smtplib.SMTP_SSL("smtp.yandex.ru", 465, timeout=60)
+        server.login(smtp_user, smtp_pass)
+        server.sendmail(smtp_user, [mail_to], msg.as_string())
+        server.quit()
+        print(f"[EMAIL] Статья отправлена на {mail_to}")
+        return True
+    except Exception as e:
+        print(f"[EMAIL] Ошибка отправки письма: {e}")
+        return False
+
 
 async def send_article(app, article, topic):
     title = article.get("title", "").strip()
@@ -215,6 +255,10 @@ async def send_article(app, article, topic):
         print("[ERROR] Empty article text")
         return False
 
+    # Основной способ — email
+    email_ok = send_article_email(title, text, topic)
+
+    # Запасной способ — Telegram (если email недоступен)
     message = (
         f"📰 Новая статья для Дзен — {datetime.now().strftime('%d.%m.%Y')}\n"
         f"📌 Тема: {topic['title']}\n"
