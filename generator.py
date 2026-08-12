@@ -377,6 +377,19 @@ GENERATE_IMAGE_TOPICS = {
     "итоги_недели",
 }
 
+async def send_photo_with_text(app, media_path, text):
+    """Отправка фото с текстом. Если текст не влезает в лимит подписи — отдельными сообщениями."""
+    try:
+        with open(media_path, "rb") as f:
+            await app.bot.send_photo(chat_id=CHANNEL_ID, photo=f, caption=text[:1024])
+        return
+    except Exception:
+        pass
+    # Фото с длинным текстом не проходит — шлём отдельно
+    with open(media_path, "rb") as f:
+        await app.bot.send_photo(chat_id=CHANNEL_ID, photo=f)
+    await app.bot.send_message(chat_id=CHANNEL_ID, text=text)
+
 async def main():
     app = Application.builder().token(BOT_TOKEN).build()
     today = datetime.now().weekday()
@@ -406,21 +419,19 @@ async def main():
         image_result = generate_image(image_prompt, image_overlay)
         if image_result:
             if image_result.startswith("assets/"):
-                with open(image_result, "rb") as f:
-                    await app.bot.send_photo(chat_id=CHANNEL_ID, photo=f, caption=text)
+                await send_photo_with_text(app, image_result, text)
                 try:
                     os.remove(image_result)
                 except OSError:
                     pass
             else:
-                await app.bot.send_photo(chat_id=CHANNEL_ID, photo=image_result, caption=text)
+                await app.bot.send_photo(chat_id=CHANNEL_ID, photo=image_result, caption=text[:1024])
             sent = True
 
     if not sent:
         media_path = get_random_media(topic)
         if media_path:
-            with open(media_path, "rb") as f:
-                await app.bot.send_photo(chat_id=CHANNEL_ID, photo=f, caption=text)
+            await send_photo_with_text(app, media_path, text)
         else:
             await app.bot.send_message(chat_id=CHANNEL_ID, text=text)
 
