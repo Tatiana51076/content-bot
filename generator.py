@@ -139,57 +139,64 @@ def generate_post(topic, tone, facts=None, history=None):
     "image_text_overlay": "короткий заголовок для картинки (3-5 слов)"
 }}
 """
-    try:
-        response = requests.post(
-            LLM_API,
-            headers=HEADERS,
-            json={
-                "model": LLM_MODEL,
-                "messages": [{"role": "user", "content": prompt}],
-                "response_format": {"type": "json_object"},
-                "max_tokens": 1500,
-                "temperature": 0.9
-            },
-            timeout=90
-        )
-        response.raise_for_status()
-        content = response.json()["choices"][0]["message"]["content"]
-        print(f"[DEBUG] Raw model response:\n{content[:500]}...")
-
-        content = content.strip()
-        if content.startswith("```json"):
-            content = content[7:]
-            if content.endswith("```"):
-                content = content[:-3]
-        elif content.startswith("```"):
-            content = content[3:]
-            if content.endswith("```"):
-                content = content[:-3]
-        if content.startswith('\ufeff'):
-            content = content[1:]
+    last_err = None
+    for attempt in range(2):
         try:
-            return json.loads(content)
-        except json.JSONDecodeError:
-            end = content.rfind('}')
-            if end != -1:
-                try:
-                    return json.loads(content[:end+1])
-                except:
-                    pass
-            raise ValueError("Invalid JSON from model")
-    except Exception as e:
-        print(f"[ERROR] DeepSeek API error: {e}")
-        return {
-            "text": (
-                f"{BRAND_NAME} — надёжные рефрижераторные перевозки по Москве и области. "
-                "Контроль температуры 24/7, GPS-мониторинг, отсутствие срывов. "
-                "Оставьте заявку на сайте или в Direct, рассчитаем ставку за 15 минут. "
-                f"Больше полезных материалов о перевозках и логистике — на нашем Дзен-канале: {DZEN_LINK} "
-                "#автоперевозки #рефрижератор #доставка #логистика"
-            ),
-            "image_prompt": "фура на трассе, закат, деловой стиль",
-            "image_text_overlay": f"{BRAND_NAME}"
-        }
+            response = requests.post(
+                LLM_API,
+                headers=HEADERS,
+                json={
+                    "model": LLM_MODEL,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "response_format": {"type": "json_object"},
+                    "max_tokens": 1500,
+                    "temperature": 0.9
+                },
+                timeout=150
+            )
+            response.raise_for_status()
+            content = response.json()["choices"][0]["message"]["content"]
+            print(f"[DEBUG] Raw model response:\n{content[:500]}...")
+
+            content = content.strip()
+            if content.startswith("```json"):
+                content = content[7:]
+                if content.endswith("```"):
+                    content = content[:-3]
+            elif content.startswith("```"):
+                content = content[3:]
+                if content.endswith("```"):
+                    content = content[:-3]
+            if content.startswith('\ufeff'):
+                content = content[1:]
+            try:
+                return json.loads(content)
+            except json.JSONDecodeError:
+                end = content.rfind('}')
+                if end != -1:
+                    try:
+                        return json.loads(content[:end+1])
+                    except:
+                        pass
+                raise ValueError("Invalid JSON from model")
+        except Exception as e:
+            last_err = e
+            print(f"[ERROR] DeepSeek API error (attempt {attempt + 1}/2): {e}")
+            if attempt < 1:
+                import time
+                time.sleep(5)
+    print(f"[ERROR] Post generation failed: {last_err}")
+    return {
+        "text": (
+            f"{BRAND_NAME} — надёжные рефрижераторные перевозки по Москве и области. "
+            "Контроль температуры 24/7, GPS-мониторинг, отсутствие срывов. "
+            "Оставьте заявку на сайте или в Direct, рассчитаем ставку за 15 минут. "
+            f"Больше полезных материалов о перевозках и логистике — на нашем Дзен-канале: {DZEN_LINK} "
+            "#автоперевозки #рефрижератор #доставка #логистика"
+        ),
+        "image_prompt": "фура на трассе, закат, деловой стиль",
+        "image_text_overlay": f"{BRAND_NAME}"
+    }
 
 def generate_image(prompt, text_overlay=""):
     # Генерация изображений через «Все LLM» (vsellm.ru), OpenAI-совместимый API
