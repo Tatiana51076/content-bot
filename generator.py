@@ -22,6 +22,8 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 LOGIST_TG_ID = int(os.getenv("LOGIST_TG_ID", "123456789"))
 CHANNEL_ID = os.getenv("CHANNEL_ID")
 
+DZEN_LINK = os.getenv("DZEN_LINK", "https://dzen.ru/globaltruck.online?share_to=link")
+
 LLM_API = f"{LLM_API_BASE}/chat/completions"
 HEADERS = {
     "Authorization": f"Bearer {LLM_API_KEY}",
@@ -90,6 +92,8 @@ def generate_post(topic, tone, facts=None):
 - Текст должен быть НОВЫМ и отличаться от любых предыдущих постов: меняй структуру, вступления, примеры и формулировки.
 - Не начинай пост одинаковыми фразами каждый раз. Используй разные стили начала: вопрос, цифра, факт, история, прямое обращение.
 - Не перечисляй в каждом посте одно и то же — если это итоги недели, НЕ пиши про количество новых клиентов и НЕ пиши про отзывы, только про работу: рейсы, километры, тонны, отсутствие нарушений.
+
+ОБЯЗАТЕЛЬНО: в конце поста (перед хэштегами) добавь строку с приглашением читать подробные статьи и материалы на нашем Дзен-канале, указав ссылку: {DZEN_LINK}
 
 Формат ответа — строгий JSON (без markdown, без пояснений):
 {{
@@ -368,6 +372,14 @@ async def main():
 
     await app.bot.send_message(chat_id=LOGIST_TG_ID, text="✅ Пост опубликован в канале")
     print("Пост опубликован в канале")
+
+    # По воскресеньям (день 6) дополнительно генерируем статью для Дзена на модерацию
+    if today == 6:
+        try:
+            import articles
+            await articles.generate_and_send_article(app)
+        except Exception as e:
+            print(f"[ERROR] Не удалось сгенерировать статью: {e}")
 
 if __name__ == "__main__":
     asyncio.run(main())
