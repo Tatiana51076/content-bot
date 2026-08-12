@@ -24,6 +24,30 @@ CHANNEL_ID = os.getenv("CHANNEL_ID")
 
 DZEN_LINK = os.getenv("DZEN_LINK", "https://dzen.ru/globaltruck.online?share_to=link")
 
+# История последних постов (хранится в репозитории, чтобы текст не повторялся)
+POST_HISTORY_FILE = "post_history.json"
+
+
+def load_post_history():
+    if os.path.exists(POST_HISTORY_FILE):
+        try:
+            with open(POST_HISTORY_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return []
+    return []
+
+
+def save_post_history(history):
+    with open(POST_HISTORY_FILE, "w", encoding="utf-8") as f:
+        json.dump(history[-6:], f, ensure_ascii=False, indent=2)
+
+
+def remember_post(text):
+    history = load_post_history()
+    history.append({"date": datetime.now().strftime("%d.%m.%Y"), "text": text})
+    save_post_history(history)
+
 LLM_API = f"{LLM_API_BASE}/chat/completions"
 HEADERS = {
     "Authorization": f"Bearer {LLM_API_KEY}",
@@ -40,9 +64,11 @@ DAYS_THEMES = {
     6: ("итоги_недели", "дружеский"),
 }
 
-def generate_post(topic, tone, facts=None):
+def generate_post(topic, tone, facts=None, history=None):
     if facts is None:
         facts = {}
+    if history is None:
+        history = []
     theme_descriptions = {
         "новости_компании": "пост о новости компании: новый клиент, рейс, достижение сотрудника",
         "отраслевые_новости": "пост о трендах и новостях рынка грузоперевозок, полезный для клиентов",
@@ -56,6 +82,13 @@ def generate_post(topic, tone, facts=None):
     colors_str = ", ".join(BRAND_COLORS)
     facts_str = json.dumps(facts, ensure_ascii=False, indent=2) if facts else ""
     today = datetime.now().strftime("%d.%m.%Y")
+
+    # Предыдущие посты — чтобы текст НЕ повторялся
+    prev_posts = ""
+    if history:
+        prev_texts = [h.get("text", "") for h in history if h.get("text")]
+        if prev_texts:
+            prev_posts = "\n".join(f"- {t[:300]}" for t in prev_texts[-5:])
 
     # Оформление изображения под тему: для «оформительских» тем — без фото машин
     if topic == "итоги_недели":
@@ -88,6 +121,9 @@ def generate_post(topic, tone, facts=None):
 Мы — компания «ГлобалТракГарант». Работаем с 2016 года, специализируемся на рефрижераторных перевозках по Москве и Московской области.
 У нас собственный автопарк, строгий контроль температуры, видеоконтроль 24/7.
 
+ПРЕДЫДУЩИЕ ПОСТЫ (НЕ ПОВТОРЯЙ их смысл, формулировки, примеры и цифры — напиши совсем другой текст):
+{prev_posts}
+
 ВАЖНОЕ ТРЕБОВАНИЕ К РАЗНООБРАЗИЮ:
 - Текст должен быть НОВЫМ и отличаться от любых предыдущих постов: меняй структуру, вступления, примеры и формулировки.
 - Не начинай пост одинаковыми фразами каждый раз. Используй разные стили начала: вопрос, цифра, факт, история, прямое обращение.
@@ -110,7 +146,7 @@ def generate_post(topic, tone, facts=None):
                 "model": LLM_MODEL,
                 "messages": [{"role": "user", "content": prompt}],
                 "response_format": {"type": "json_object"},
-                "max_tokens": 1000,
+                "max_tokens": 1500,
                 "temperature": 0.9
             },
             timeout=90
@@ -337,7 +373,8 @@ async def main():
     today = datetime.now().weekday()
     topic, tone = DAYS_THEMES.get(today, ("итоги_недели", "дружеский"))
     facts = collect_facts(topic)
-    post_data = generate_post(topic, tone, facts)
+    history = load_post_history()
+    post_data = generate_post(topic, tone, facts, history)
     text = post_data.get("text", "Не удалось сгенерировать пост.")
     image_prompt = post_data.get("image_prompt", "")
     image_overlay = post_data.get("image_text_overlay", "")
@@ -370,6 +407,7 @@ async def main():
         else:
             await app.bot.send_message(chat_id=CHANNEL_ID, text=text)
 
+    remember_post(text)
     await app.bot.send_message(chat_id=LOGIST_TG_ID, text="✅ Пост опубликован в канале")
     print("Пост опубликован в канале")
 
