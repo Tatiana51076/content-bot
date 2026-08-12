@@ -206,7 +206,49 @@ def generate_article(topic):
     print("[ERROR] Article generation failed after 3 attempts")
     return None
 
-# --- Отправка статьи на модерацию ---
+# --- Отправка статьи на модерацию: email (SMTP) + файл в репозитории ---
+
+def send_article_email(title, text, topic):
+    """Отправка статьи на email через SMTP (Mail.ru или Yandex)."""
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.header import Header
+    from email.utils import formataddr
+
+    smtp_user = os.getenv("SMTP_USER")
+    smtp_pass = os.getenv("SMTP_PASSWORD")
+    mail_to = os.getenv("MAIL_TO") or smtp_user
+    smtp_host = os.getenv("SMTP_HOST", "smtp.mail.ru")
+    smtp_port = int(os.getenv("SMTP_PORT", "465"))
+    if not smtp_user or not smtp_pass:
+        print("[EMAIL] SMTP_USER/SMTP_PASSWORD не заданы, пропускаю email")
+        return False
+
+    today = datetime.now().strftime("%d.%m.%Y")
+    body = (
+        f"Тема статьи: {topic['title']}\n"
+        f"Дата: {today}\n"
+        f"Канал Дзен: {DZEN_LINK}\n\n"
+        f"=== {title} ===\n\n"
+        f"{text}\n\n"
+        f"---\nСтатья для модерации. Опубликуйте её в Дзене самостоятельно."
+    )
+    msg = MIMEText(body, "plain", "utf-8")
+    msg["Subject"] = Header(f"Статья для Дзена — {today}", "utf-8")
+    msg["From"] = formataddr((str(Header("Контент-бот", "utf-8")), smtp_user))
+    msg["To"] = mail_to
+
+    try:
+        server = smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=60)
+        server.login(smtp_user, smtp_pass)
+        server.sendmail(smtp_user, [mail_to], msg.as_string())
+        server.quit()
+        print(f"[EMAIL] Статья отправлена на {mail_to} через {smtp_host}")
+        return True
+    except Exception as e:
+        print(f"[EMAIL] Ошибка отправки письма: {e}")
+        return False
+
 
 def save_article_to_file(title, text, topic):
     """Сохраняет статью в файл .md в папке articles/ репозитория (для модерации в GitHub)."""
@@ -238,10 +280,11 @@ async def send_article(app, article, topic):
         print("[ERROR] Empty article text")
         return False
 
-    # Сохраняем статью в файл в репозитории (основной способ — открывать с телефона в GitHub)
-    fname = save_article_to_file(title, text, topic)
+    # Основной способ — email на почту
+    email_ok = send_article_email(title, text, topic)
 
-    # Отправляем ссылку на статью в Telegram для модерации
+    # Запасной способ — сохранить в файл репозитория и прислать ссылку в Telegram
+    fname = save_article_to_file(title, text, topic)
     repo = os.getenv("GITHUB_REPOSITORY", "Tatiana51076/content-bot")
     url = f"https://github.com/{repo}/blob/main/{fname}"
     raw_url = f"https://raw.githubusercontent.com/{repo}/main/{fname}"
@@ -251,16 +294,16 @@ async def send_article(app, article, topic):
         f"📌 Тема: {topic['title']}\n"
         f"🔗 Канал: {DZEN_LINK}\n\n"
         f"**{title}**\n\n"
-        f"Статья сохранена в репозитории. Откройте и скопируйте текст:\n"
+        f"{'✅ Отправлена на почту.' if email_ok else '⚠️ Почта не сработала.'}\n"
+        f"Резервная копия в репозитории:\n"
         f"{url}\n\n"
         f"Быстрый просмотр (без входа): {raw_url}\n\n"
         f"---\n⚠️ Статья для модерации. Опубликуйте её в Дзене самостоятельно."
     )
 
-    # Отправляем двумя сообщениями: ссылки + краткая сводка (без полного текста, чтобы не копировать из TG)
     await app.bot.send_message(chat_id=LOGIST_TG_ID, text=message)
-    print("Ссылка на статью отправлена логисту")
-    return True
+    print("Уведомление о статье отправлено логисту")
+    return email_ok or True
 
 async def generate_and_send_article(app):
     """Генерирует статью по воскресеньям и отправляет её логисту."""
