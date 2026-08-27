@@ -46,6 +46,6 @@ jobs:
         run: |
           git config user.name "content-bot"
           git config user.email "content-bot@users.noreply.github.com"
-          git add article_state.json post_history.json articles
+          git add article_state.json post_history.json topic_state.json articles
           git commit -m "chore: update article topic state" || echo "No changes to commit"
           git push

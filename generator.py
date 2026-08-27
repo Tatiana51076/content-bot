@@ -48,6 +48,40 @@ def remember_post(text):
     history.append({"date": datetime.now().strftime("%d.%m.%Y"), "text": text})
     save_post_history(history)
 
+# Файл состояния: какая тема/факт была использована в последний раз для каждого дня недели
+TOPIC_STATE_FILE = "topic_state.json"
+
+
+def load_topic_state():
+    if os.path.exists(TOPIC_STATE_FILE):
+        try:
+            with open(TOPIC_STATE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+
+def save_topic_state(state):
+    with open(TOPIC_STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False, indent=2)
+
+
+def pick_fact(options, topic):
+    """Случайный выбор факта/темы без повтора той же темы два раза подряд."""
+    def key_of(o):
+        for k in ("тема", "событие", "работа", "тема_поста"):
+            if o.get(k):
+                return o[k]
+        return json.dumps(o, ensure_ascii=False)
+    state = load_topic_state()
+    last = state.get(topic)
+    pool = [o for o in options if key_of(o) != last] or options
+    chosen = random.choice(pool)
+    state[topic] = key_of(chosen)
+    save_topic_state(state)
+    return chosen
+
 LLM_API = f"{LLM_API_BASE}/chat/completions"
 HEADERS = {
     "Authorization": f"Bearer {LLM_API_KEY}",
@@ -245,7 +279,7 @@ def generate_image(prompt, text_overlay=""):
 def collect_facts(topic):
     facts = {}
     if topic == "новости_компании":
-        facts = random.choice([
+        facts = pick_fact([
             {
                 "событие": "новый корпоративный клиент или успешный рейс",
                 "детали": "доставка продуктов в сеть ресторанов Москвы, 3 рейса в неделю",
@@ -336,9 +370,9 @@ def collect_facts(topic):
                 "суть": "цифровизация документов и ЭТрН, онлайн-мониторинг, рост требований к температуре, прозрачные ставки",
                 "кому_полезно": "и грузовладельцу, и перевозчику: быть на шаг впереди"
             },
-        ])
+        ], topic)
     elif topic == "отраслевые_новости":
-        facts = random.choice([
+        facts = pick_fact([
             {
                 "тема": "рост спроса на рефрижераторные перевозки в Московском регионе",
                 "факт": "по данным аналитиков, спрос вырос на 12% за квартал",
@@ -354,9 +388,9 @@ def collect_facts(topic):
                 "факт": "всё больше перевозчиков внедряют температурный мониторинг в реальном времени",
                 "значение_для_клиента": "прозрачность и контроль температуры становятся стандартом"
             },
-        ])
+        ], topic)
     elif topic == "законодательство":
-        facts = random.choice([
+        facts = pick_fact([
             {
                 "закон": "актуальные правила перевозки грузов в Москве",
                 "суть": "напоминаем о требованиях к пропускам и времени въезда в центр",
@@ -372,9 +406,9 @@ def collect_facts(topic):
                 "суть": "напомним про тахографы и контроль рабочего времени",
                 "кого_касается": "транспортных компаний и логистов"
             },
-        ])
+        ], topic)
     elif topic == "совет_или_лайфхак":
-        facts = random.choice([
+        facts = pick_fact([
             {
                 "тема": "как выбрать надёжного перевозчика для скоропорта",
                 "суть": "3 признака: наличие рефрижераторов с температурным мониторингом, опыт от 5 лет, страховка груза"
@@ -503,9 +537,9 @@ def collect_facts(topic):
                 "тема": "как использовать чат-ботов для быстрой связи с клиентом",
                 "суть": "автоматизация уведомлений, статусов, ответов на частые вопросы"
             },
-        ])
+        ], topic)
     elif topic == "вопрос_подписчикам":
-        facts = random.choice([
+        facts = pick_fact([
             {
                 "вопрос": "Какой фактор для вас важнее при выборе перевозчика: цена или скорость доставки?",
                 "варианты_ответов": "Цена / Скорость / Надёжность / Всё сразу",
@@ -521,9 +555,9 @@ def collect_facts(topic):
                 "варианты_ответов": "Критично / Желательно / Не задумывался",
                 "призыв": "Голосуйте в комментариях!"
             },
-        ])
+        ], topic)
     elif topic == "трудовые_будни":
-        facts = random.choice([
+        facts = pick_fact([
             {
                 "работа": "что проверяем в машине перед каждым рейсом",
                 "что_делаем": "чек-лист за 15 минут: масло, тормоза, свет, шины, уровень охлаждающей жидкости",
@@ -589,9 +623,9 @@ def collect_facts(topic):
                 "что_делаем": "медицинская помощь, замена, сохранение груза",
                 "суть": "алгоритм, который защищает и людей, и груз"
             },
-        ])
+        ], topic)
     elif topic == "итоги_недели":
-        facts = random.choice([
+        facts = pick_fact([
             {
                 "тема_поста": "что нового в логистике за эту неделю",
                 "идея": "краткий обзор новостей, изменений ставок, биржевых трендов"
@@ -612,7 +646,7 @@ def collect_facts(topic):
                 "тема_поста": "что я делаю в воскресенье, чтобы отдохнуть от дороги",
                 "идея": "советы по восстановлению, хобби вне работы"
             },
-        ])
+        ], topic)
     return facts
 
 def get_random_media(topic=""):
