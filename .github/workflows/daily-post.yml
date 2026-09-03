@@ -30,9 +30,9 @@ jobs:
           LOGIST_TG_ID: ${{ secrets.LOGIST_TG_ID }}
           OPENAI_LIKE_API_KEY: ${{ secrets.OPENAI_LIKE_API_KEY }}
           OPENAI_LIKE_API_BASE_URL: https://api.vsellm.ru/v1
-          LLM_MODEL: qwen/qwen3.5-plus
+          LLM_MODEL: openai/gpt-4o-mini
           IMAGE_MODEL: openai/gpt-image-1-mini
-          ARTICLE_MODEL: qwen/qwen3.5-plus
+          ARTICLE_MODEL: openai/gpt-4o-mini
           ARTICLE_CUSTOM_TITLE: ${{ inputs.article_topic }}
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}

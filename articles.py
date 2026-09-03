@@ -23,7 +23,7 @@ def _env_colors():
         return ["#0C7281", "#043556", "#042134", "#FFFFFB"]
 
 DZEN_LINK = os.getenv("DZEN_LINK", "https://dzen.ru/globaltruck.online?share_to=link")
-ARTICLE_MODEL = os.getenv("ARTICLE_MODEL") or os.getenv("LLM_MODEL", "deepseek/deepseek-v4-flash")
+ARTICLE_MODEL = os.getenv("ARTICLE_MODEL") or os.getenv("LLM_MODEL", "openai/gpt-4o-mini")
 LOGIST_TG_ID = int(os.getenv("LOGIST_TG_ID", "123456789"))
 
 # Состояние: файл с последними использованными темами (хранится в репозитории между запусками)
@@ -166,17 +166,34 @@ def generate_article(topic):
                 json={
                     "model": ARTICLE_MODEL,
                     "messages": [{"role": "user", "content": prompt}],
-                    "response_format": {"type": "json_object"},
+                    # response_format json_object даёт 400 на этом API — не шлём, парсим сами
                     "max_tokens": 12000,
                     "temperature": 0.8,
                 },
                 timeout=300,
             )
-            response.raise_for_status()
-            content = response.json()["choices"][0]["message"]["content"]
-            print(f"[DEBUG] Article raw response (first 300):\n{content[:300]}")
+            if response.status_code != 200:
+                print(f"[ERROR] Article API HTTP {response.status_code}: {response.text[:400]}")
+                raise RuntimeError(f"Article API HTTP {response.status_code}: {response.text[:200]}")
+            data = response.json()
+            choices = data.get("choices")
+            if not choices:
+                raise RuntimeError(f"No 'choices' in article response: {str(data)[:200]}")
+            raw = None
+            message = choices[0].get("message") or {}
+            if message.get("content"):
+                raw = message["content"]
+            if raw is None or not raw.strip():
+                for key in ("reasoning", "reasoning_content"):
+                    v = message.get(key)
+                    if v and v.strip():
+                        raw = v
+                        break
+            if raw is None or not raw.strip():
+                raise RuntimeError("Model returned empty content for article")
+            print(f"[DEBUG] Article raw response (first 300):\n{str(raw)[:300]}")
 
-            content = content.strip()
+            content = str(raw).strip()
             if content.startswith("```json"):
                 content = content[7:]
                 if content.endswith("```"):
@@ -188,12 +205,18 @@ def generate_article(topic):
             if content.startswith("\ufeff"):
                 content = content[1:]
             try:
-                return json.loads(content)
+                parsed = json.loads(content)
+                if isinstance(parsed, dict) and parsed.get("title") and parsed.get("text"):
+                    return parsed
+                raise ValueError("Article JSON missing title/text")
             except json.JSONDecodeError:
+                start = content.find("{")
                 end = content.rfind("}")
-                if end != -1:
+                if start != -1 and end != -1 and end > start:
                     try:
-                        return json.loads(content[: end + 1])
+                        parsed = json.loads(content[start : end + 1])
+                        if isinstance(parsed, dict) and parsed.get("title") and parsed.get("text"):
+                            return parsed
                     except Exception:
                         pass
                 raise ValueError("Invalid JSON from model for article")
@@ -203,7 +226,7 @@ def generate_article(topic):
             if attempt < 2:
                 import time
                 time.sleep(10)
-    print("[ERROR] Article generation failed after 3 attempts")
+    print(f"[ERROR] Article generation failed after 3 attempts: {last_err}")
     return None
 
 # --- Отправка статьи на модерацию: email (SMTP) + файл в репозитории ---

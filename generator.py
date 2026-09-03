@@ -11,7 +11,7 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 # Генерация текста: «Все LLM» (vsellm.ru) OpenAI-совместимый API, либо DeepSeek как fallback
 LLM_API_KEY = os.getenv("OPENAI_LIKE_API_KEY") or os.getenv("DEEPSEEK_API_KEY")
 LLM_API_BASE = os.getenv("OPENAI_LIKE_API_BASE_URL") or "https://api.vsellm.ru/v1"
-LLM_MODEL = os.getenv("LLM_MODEL", "deepseek/deepseek-v4-flash")
+LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-4o-mini")
 BRAND_NAME = os.getenv("BRAND_NAME", "ГлобалТракГарант")
 try:
     BRAND_COLORS = json.loads(os.getenv("BRAND_COLORS", '["#0C7281", "#043556", "#042134", "#FFFFFB"]'))
@@ -175,64 +175,93 @@ def generate_post(topic, tone, facts=None, history=None):
     "image_text_overlay": "короткий заголовок для картинки (3-5 слов)"
 }}
 """
-    last_err = None
-    for attempt in range(2):
+    def _extract_json(text):
+        """Извлекает JSON-объект из текста модели (устойчиво к markdown и обвязке)."""
+        if not text:
+            return None
+        text = text.strip()
+        if text.startswith("\ufeff"):
+            text = text[1:]
+        if text.startswith("```json"):
+            text = text[7:]
+        if text.startswith("```"):
+            text = text[3:]
+        if text.endswith("```"):
+            text = text[:-3]
+        text = text.strip()
         try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+        # Ищем самый большой фрагмент, похожий на JSON-объект: от { до последней }
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            candidate = text[start:end + 1]
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                return None
+        return None
+
+    last_err = None
+    for attempt in range(3):
+        try:
+            payload = {
+                "model": LLM_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                # response_format с json_object даёт 400 на этом API — НЕ шлём его,
+                # требуем JSON текстом в промпте и вытаскиваем сами.
+                "max_tokens": 4000,
+                "temperature": 0.85
+            }
             response = requests.post(
                 LLM_API,
                 headers=HEADERS,
-                json={
-                    "model": LLM_MODEL,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "response_format": {"type": "json_object"},
-                    "max_tokens": 1500,
-                    "temperature": 0.9
-                },
-                timeout=150
+                json=payload,
+                timeout=180
             )
-            response.raise_for_status()
-            content = response.json()["choices"][0]["message"]["content"]
-            print(f"[DEBUG] Raw model response:\n{content[:500]}...")
+            if response.status_code != 200:
+                # Показываем тело ответа — там часто причина (нет модели, нет денег и т.п.)
+                print(f"[ERROR] API HTTP {response.status_code}: {response.text[:600]}")
+                raise RuntimeError(f"API HTTP {response.status_code}: {response.text[:300]}")
+            data = response.json()
+            choices = data.get("choices")
+            if not choices:
+                raise RuntimeError(f"No 'choices' in response: {str(data)[:300]}")
 
-            content = content.strip()
-            if content.startswith("```json"):
-                content = content[7:]
-                if content.endswith("```"):
-                    content = content[:-3]
-            elif content.startswith("```"):
-                content = content[3:]
-                if content.endswith("```"):
-                    content = content[:-3]
-            if content.startswith('\ufeff'):
-                content = content[1:]
-            try:
-                return json.loads(content)
-            except json.JSONDecodeError:
-                end = content.rfind('}')
-                if end != -1:
-                    try:
-                        return json.loads(content[:end+1])
-                    except:
-                        pass
-                raise ValueError("Invalid JSON from model")
+            raw = None
+            message = choices[0].get("message") or {}
+            if message.get("content"):
+                raw = message["content"]
+            # fallback: если content пустой — пробуем поле reasoning/reasoning_content
+            if raw is None or not raw.strip():
+                for key in ("reasoning", "reasoning_content"):
+                    v = message.get(key)
+                    if v and v.strip():
+                        raw = v
+                        break
+
+            if raw is None or not raw.strip():
+                raise RuntimeError("Model returned empty content (all fields empty)")
+            print(f"[DEBUG] Raw model response:\n{str(raw)[:500]}...")
+
+            parsed = _extract_json(raw)
+            if parsed is None or not isinstance(parsed, dict):
+                raise ValueError(f"Invalid JSON from model: {str(raw)[:300]}")
+            if not parsed.get("text"):
+                raise ValueError("JSON from model has no 'text' field")
+            # короткая задержка между попытками, если текст не удался
+            return parsed
         except Exception as e:
             last_err = e
-            print(f"[ERROR] DeepSeek API error (attempt {attempt + 1}/2): {e}")
-            if attempt < 1:
+            print(f"[ERROR] LLM API error (attempt {attempt + 1}/3): {e}")
+            if attempt < 2:
                 import time
-                time.sleep(5)
-    print(f"[ERROR] Post generation failed: {last_err}")
-    return {
-        "text": (
-            f"{BRAND_NAME} — надёжные рефрижераторные перевозки по Москве и области. "
-            "Контроль температуры 24/7, GPS-мониторинг, отсутствие срывов. "
-            "Оставьте заявку на сайте или в Direct, рассчитаем ставку за 15 минут. "
-            f"Больше полезных материалов о перевозках и логистике — на нашем Дзен-канале: {DZEN_LINK} "
-            "#автоперевозки #рефрижератор #доставка #логистика"
-        ),
-        "image_prompt": "фура на трассе, закат, деловой стиль",
-        "image_text_overlay": f"{BRAND_NAME}"
-    }
+                time.sleep(10)
+    # Публиковать запасной текст НЕЛЬЗЯ: это создаёт дубли в канале.
+    # Бросаем ошибку, чтобы workflow завершился со статусом failure и стал виден сбой.
+    raise RuntimeError(f"Post generation failed after retries: {last_err}")
 
 def generate_image(prompt, text_overlay=""):
     # Генерация изображений через «Все LLM» (vsellm.ru), OpenAI-совместимый API
@@ -689,10 +718,33 @@ async def main():
     topic, tone = DAYS_THEMES.get(today, ("итоги_недели", "дружеский"))
     facts = collect_facts(topic)
     history = load_post_history()
-    post_data = generate_post(topic, tone, facts, history)
-    text = post_data.get("text", "Не удалось сгенерировать пост.")
+
+    try:
+        post_data = generate_post(topic, tone, facts, history)
+    except Exception as e:
+        # Сообщаем о сбое, но НЕ публикуем запасной текст (иначе дубли в канале).
+        err_msg = f"❌ Ошибка генерации поста ({datetime.now().strftime('%d.%m.%Y %H:%M')}).\nТема: {topic}\n\n{e}"
+        print(f"[FATAL] {err_msg}")
+        try:
+            await app.bot.send_message(chat_id=LOGIST_TG_ID, text=err_msg)
+        except Exception as notify_err:
+            print(f"[ERROR] Не удалось отправить уведомление об ошибке: {notify_err}")
+        import sys
+        sys.exit(1)
+
+    text = post_data.get("text", "")
     image_prompt = post_data.get("image_prompt", "")
     image_overlay = post_data.get("image_text_overlay", "")
+
+    if not text:
+        err_msg = "❌ Модель вернула пустой текст поста."
+        print(f"[FATAL] {err_msg}")
+        try:
+            await app.bot.send_message(chat_id=LOGIST_TG_ID, text=err_msg)
+        except Exception:
+            pass
+        import sys
+        sys.exit(1)
 
     if len(text) > 900:
         text = text[:897] + "..."
@@ -707,30 +759,41 @@ async def main():
 
     # Смешанная логика: оформительские темы — генерируем изображение,
     # «трудовые будни» и прочие — берём загруженное фото из папки.
-    sent = False
-    if topic in GENERATE_IMAGE_TOPICS:
-        image_result = generate_image(image_prompt, image_overlay)
-        if image_result:
-            if image_result.startswith("assets/"):
-                await send_photo_with_text(app, image_result, text)
-                try:
-                    os.remove(image_result)
-                except OSError:
-                    pass
+    try:
+        sent = False
+        if topic in GENERATE_IMAGE_TOPICS:
+            image_result = generate_image(image_prompt, image_overlay)
+            if image_result:
+                if image_result.startswith("assets/"):
+                    await send_photo_with_text(app, image_result, text)
+                    try:
+                        os.remove(image_result)
+                    except OSError:
+                        pass
+                else:
+                    await app.bot.send_photo(chat_id=CHANNEL_ID, photo=image_result, caption=text[:1024])
+                sent = True
+
+        if not sent:
+            media_path = get_random_media(topic)
+            if media_path:
+                await send_photo_with_text(app, media_path, text)
             else:
-                await app.bot.send_photo(chat_id=CHANNEL_ID, photo=image_result, caption=text[:1024])
-            sent = True
+                await app.bot.send_message(chat_id=CHANNEL_ID, text=text)
 
-    if not sent:
-        media_path = get_random_media(topic)
-        if media_path:
-            await send_photo_with_text(app, media_path, text)
-        else:
-            await app.bot.send_message(chat_id=CHANNEL_ID, text=text)
-
-    remember_post(text)
-    await app.bot.send_message(chat_id=LOGIST_TG_ID, text="✅ Пост опубликован в канале")
-    print("Пост опубликован в канале")
+        remember_post(text)
+        await app.bot.send_message(chat_id=LOGIST_TG_ID, text="✅ Пост опубликован в канале")
+        print("Пост опубликован в канале")
+    except Exception as e:
+        # Публикация сорвалась (например, бан/блок канала, длинный текст и т.п.)
+        err_msg = f"❌ Пост сгенерирован, но НЕ опубликован.\nТема: {topic}\nДата: {datetime.now().strftime('%d.%m.%Y %H:%M')}\n\nОшибка: {e}"
+        print(f"[FATAL] {err_msg}")
+        try:
+            await app.bot.send_message(chat_id=LOGIST_TG_ID, text=err_msg)
+        except Exception:
+            pass
+        import sys
+        sys.exit(1)
 
     # Статья для Дзена: по воскресеньям (день 6) ИЛИ когда задана ручная тема (для тестов)
     custom_title = os.getenv("ARTICLE_CUSTOM_TITLE")
