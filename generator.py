@@ -11,7 +11,7 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 # Генерация текста: «Все LLM» (vsellm.ru) OpenAI-совместимый API, либо DeepSeek как fallback
 LLM_API_KEY = os.getenv("OPENAI_LIKE_API_KEY") or os.getenv("DEEPSEEK_API_KEY")
 LLM_API_BASE = os.getenv("OPENAI_LIKE_API_BASE_URL") or "https://api.vsellm.ru/v1"
-LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-4o-mini")
+LLM_MODEL = os.getenv("LLM_MODEL", "deepseek/deepseek-chat-v3-0324")
 BRAND_NAME = os.getenv("BRAND_NAME", "ГлобалТракГарант")
 try:
     BRAND_COLORS = json.loads(os.getenv("BRAND_COLORS", '["#0C7281", "#043556", "#042134", "#FFFFFB"]'))
@@ -65,6 +65,25 @@ def load_topic_state():
 def save_topic_state(state):
     with open(TOPIC_STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=2)
+
+
+# Файл состояния: чередование «ИИ-картинка» / «фото из папки» между постами.
+IMAGE_STATE_FILE = "image_state.json"
+
+
+def next_image_mode():
+    """Возвращает 'generated' или 'photo', чередуя режимы между запусками."""
+    mode = "generated"
+    if os.path.exists(IMAGE_STATE_FILE):
+        try:
+            with open(IMAGE_STATE_FILE, "r", encoding="utf-8") as f:
+                last = (json.load(f) or {}).get("last_mode")
+            mode = "photo" if last == "generated" else "generated"
+        except Exception:
+            mode = "generated"
+    with open(IMAGE_STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump({"last_mode": mode}, f, ensure_ascii=False, indent=2)
+    return mode
 
 
 def pick_fact(options, topic):
@@ -757,11 +776,14 @@ async def main():
         else:
             text = text + f"\n\nБольше полезных материалов о перевозках и логистике — на нашем Дзен-канале: {DZEN_LINK}"
 
-    # Смешанная логика: оформительские темы — генерируем изображение,
-    # «трудовые будни» и прочие — берём загруженное фото из папки.
+    # Чередуем оформление: один пост — ИИ-картинка, следующий — фото из папки.
+    # Это снижает расходы (генерация изображений стоит дороже текста).
     try:
         sent = False
-        if topic in GENERATE_IMAGE_TOPICS:
+        mode = next_image_mode()
+        print(f"[INFO] image mode: {mode} (topic: {topic})")
+
+        if mode == "generated":
             image_result = generate_image(image_prompt, image_overlay)
             if image_result:
                 if image_result.startswith("assets/"):
@@ -774,6 +796,7 @@ async def main():
                     await app.bot.send_photo(chat_id=CHANNEL_ID, photo=image_result, caption=text[:1024])
                 sent = True
 
+        # Фото из папки (или запасной вариант, если генерация не удалась)
         if not sent:
             media_path = get_random_media(topic)
             if media_path:
