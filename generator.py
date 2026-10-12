@@ -251,25 +251,32 @@ def generate_post(topic, tone, facts=None, history=None):
 
             raw = None
             message = choices[0].get("message") or {}
-            if message.get("content"):
-                raw = message["content"]
-            # fallback: если content пустой — пробуем поле reasoning/reasoning_content
-            if raw is None or not raw.strip():
-                for key in ("reasoning", "reasoning_content"):
-                    v = message.get(key)
-                    if v and v.strip():
-                        raw = v
-                        break
-
-            if raw is None or not raw.strip():
-                raise RuntimeError("Model returned empty content (all fields empty)")
-            print(f"[DEBUG] Raw model response:\n{str(raw)[:500]}...")
-
-            parsed = _extract_json(raw)
-            if parsed is None or not isinstance(parsed, dict):
+            # Reasoning-модели (deepseek-v4-flash и т.п.) кладут цепочку рассуждений
+            # в content, а готовый ответ — в reasoning_content. Пробуем ВСЕ поля
+            # по очереди, берём то, из которого реально извлекается JSON.
+            candidates = []
+            for key in ("content", "reasoning_content", "reasoning"):
+                v = message.get(key)
+                if v and v.strip():
+                    candidates.append((key, v))
+            parsed = None
+            for key, v in candidates:
+                parsed = _extract_json(v)
+                if isinstance(parsed, dict) and parsed.get("text"):
+                    raw = v
+                    print(f"[DEBUG] Parsed JSON from field '{key}':\n{str(v)[:300]}...")
+                    break
+            if parsed is None or not isinstance(parsed, dict) or not parsed.get("text"):
+                # На случай, если разбито по нескольким полям, склеим как запасной вариант
+                merged = "\n".join(v for _, v in candidates)
+                parsed = _extract_json(merged)
+                if isinstance(parsed, dict) and parsed.get("text"):
+                    raw = merged
+                    print("[DEBUG] Parsed JSON from merged fields.")
+            if parsed is None or not isinstance(parsed, dict) or not parsed.get("text"):
+                raw = candidates[0][1] if candidates else ""
+                print(f"[DEBUG] Raw model response:\n{str(raw)[:500]}...")
                 raise ValueError(f"Invalid JSON from model: {str(raw)[:300]}")
-            if not parsed.get("text"):
-                raise ValueError("JSON from model has no 'text' field")
             # короткая задержка между попытками, если текст не удался
             return parsed
         except Exception as e:

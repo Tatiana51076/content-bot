@@ -181,35 +181,34 @@ def generate_article(topic):
                 raise RuntimeError(f"No 'choices' in article response: {str(data)[:200]}")
             raw = None
             message = choices[0].get("message") or {}
-            if message.get("content"):
-                raw = message["content"]
-            if raw is None or not raw.strip():
-                for key in ("reasoning", "reasoning_content"):
-                    v = message.get(key)
-                    if v and v.strip():
-                        raw = v
-                        break
-            if raw is None or not raw.strip():
+            # Reasoning-модели кладут цепочку рассуждений в content, готовый ответ — в reasoning_content.
+            # Пробуем все поля по очереди, берём то, где есть валидный JSON со статьёй.
+            candidates = []
+            for key in ("content", "reasoning_content", "reasoning"):
+                v = message.get(key)
+                if v and v.strip():
+                    candidates.append((key, v))
+            if not candidates:
                 raise RuntimeError("Model returned empty content for article")
-            print(f"[DEBUG] Article raw response (first 300):\n{str(raw)[:300]}")
 
-            content = str(raw).strip()
-            if content.startswith("```json"):
-                content = content[7:]
-                if content.endswith("```"):
-                    content = content[:-3]
-            elif content.startswith("```"):
-                content = content[3:]
-                if content.endswith("```"):
-                    content = content[:-3]
-            if content.startswith("\ufeff"):
-                content = content[1:]
-            try:
-                parsed = json.loads(content)
-                if isinstance(parsed, dict) and parsed.get("title") and parsed.get("text"):
-                    return parsed
-                raise ValueError("Article JSON missing title/text")
-            except json.JSONDecodeError:
+            def try_parse(text: str):
+                content = text.strip()
+                if content.startswith("```json"):
+                    content = content[7:]
+                    if content.endswith("```"):
+                        content = content[:-3]
+                elif content.startswith("```"):
+                    content = content[3:]
+                    if content.endswith("```"):
+                        content = content[:-3]
+                if content.startswith("\ufeff"):
+                    content = content[1:]
+                try:
+                    parsed = json.loads(content)
+                    if isinstance(parsed, dict) and parsed.get("title") and parsed.get("text"):
+                        return parsed
+                except json.JSONDecodeError:
+                    pass
                 start = content.find("{")
                 end = content.rfind("}")
                 if start != -1 and end != -1 and end > start:
@@ -219,7 +218,20 @@ def generate_article(topic):
                             return parsed
                     except Exception:
                         pass
-                raise ValueError("Invalid JSON from model for article")
+                return None
+
+            for key, v in candidates:
+                parsed = try_parse(v)
+                if parsed is not None:
+                    print(f"[DEBUG] Article parsed from field '{key}'.")
+                    return parsed
+            merged = "\n".join(v for _, v in candidates)
+            parsed = try_parse(merged)
+            if parsed is not None:
+                print("[DEBUG] Article parsed from merged fields.")
+                return parsed
+            print(f"[DEBUG] Article raw response (first 300):\n{str(candidates[0][1])[:300]}")
+            raise ValueError("Invalid JSON from model for article")
         except Exception as e:
             last_err = e
             print(f"[ERROR] Article generation error (attempt {attempt + 1}/3): {e}")
