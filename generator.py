@@ -231,16 +231,14 @@ def generate_post(topic, tone, facts=None, history=None):
                 "messages": [{"role": "user", "content": prompt}],
                 # response_format с json_object даёт 400 на этом API — НЕ шлём его,
                 # требуем JSON текстом в промпте и вытаскиваем сами.
-                # reasoning-модель (deepseek-v4-flash) тратит токены на размышления,
-                # поэтому лимит должен быть с запасом, иначе content остаётся пустым.
-                "max_tokens": 16000,
+                "max_tokens": 4000,
                 "temperature": 0.85
             }
             response = requests.post(
                 LLM_API,
                 headers=HEADERS,
                 json=payload,
-                timeout=300
+                timeout=180
             )
             if response.status_code != 200:
                 # Показываем тело ответа — там часто причина (нет модели, нет денег и т.п.)
