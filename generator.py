@@ -275,6 +275,7 @@ def generate_post(topic, tone, facts=None, history=None):
                     print("[DEBUG] Parsed JSON from merged fields.")
             if parsed is None or not isinstance(parsed, dict) or not parsed.get("text"):
                 raw = candidates[0][1] if candidates else ""
+                print(f"[DEBUG] Full response data:\n{str(data)[:2000]}")
                 print(f"[DEBUG] Raw model response:\n{str(raw)[:500]}...")
                 raise ValueError(f"Invalid JSON from model: {str(raw)[:300]}")
             # короткая задержка между попытками, если текст не удался
